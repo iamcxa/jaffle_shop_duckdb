@@ -50,6 +50,7 @@ final as (
     select
         customers.customer_id,
         customers.first_name,
+        customers.middle_name,
         customers.last_name,
         customer_orders.first_order,
         customer_orders.most_recent_order,

@@ -30,6 +30,33 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Extract Claude Prompt
+        id: extract-prompt
+        run: |
+          # 根據不同的事件類型提取評論內容
+          if [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+            COMMENT_BODY="${{ github.event.comment.body }}"
+          elif [[ "${{ github.event_name }}" == "pull_request_review_comment" ]]; then
+            COMMENT_BODY="${{ github.event.comment.body }}"
+          elif [[ "${{ github.event_name }}" == "pull_request_review" ]]; then
+            COMMENT_BODY="${{ github.event.review.body }}"
+          elif [[ "${{ github.event_name }}" == "issues" ]]; then
+            COMMENT_BODY="${{ github.event.issue.body }}"
+          fi
+          
+          # 提取 @claude 後面的文字（支援同一行或多行）
+          PROMPT=$(echo "$COMMENT_BODY" | sed -n 's/.*@claude[[:space:]]*//p' | sed '/^$/d')
+          
+          # 設定 output，如果提取到文字則輸出，否則為空
+          if [[ -n "$PROMPT" ]]; then
+            echo "prompt<<EOF" >> $GITHUB_OUTPUT
+            echo "$PROMPT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "has_prompt=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_prompt=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
@@ -40,8 +67,9 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
+          # Dynamically set prompt if extracted from @claude comment
+          # If no custom prompt is specified, Claude will perform the instructions specified in the comment that tagged it.
+          prompt: ${{ steps.extract-prompt.outputs.has_prompt == 'true' && steps.extract-prompt.outputs.prompt || '' }}
 
           # Optional: Add claude_args to customize behavior and configuration
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md

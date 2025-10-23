@@ -230,5 +230,5 @@ jobs:
           # Configure Recce MCP tools via claude_args
           # Available tools: get_lineage_diff, row_count_diff, query, query_diff, profile_diff
           # Note: Recce tools are only available when running in PR context with artifacts
-          claude_args: "--mcp-config .github/mcp_config.json --max-turns 10"
+          claude_args: "--mcp-config .github/mcp_config.json --max-turns 20"
 

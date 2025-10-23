@@ -28,9 +28,83 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Run Claude Code
+      - name: Checkout Recce Repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'DataRecce/recce'
+          path: 'recce-repo'
+          ref: 'main'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}-${{ hashFiles('recce-repo/pyproject.toml') }}
+          restore-keys: |
+            pip-
+
+      - name: Cache dbt packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            dbt_packages/
+            ~/.dbt/
+          key: dbt-packages-${{ hashFiles('packages.yml') }}
+          restore-keys: |
+            dbt-packages-
+
+      - name: Install Recce from source
+        run: |
+          cd recce-repo
+          pip install -e .
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Install dbt packages
+        run: |
+          dbt deps
+
+      - name: Cache base target artifacts
+        id: cache-base-target
+        uses: actions/cache@v4
+        with:
+          path: target-base/
+          key: dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}
+          restore-keys: |
+            dbt-base-${{ github.event.pull_request.base.ref }}-
+
+      - name: Prepare dbt Base environment
+        if: steps.cache-base-target.outputs.cache-hit != 'true'
+        run: |
+          # Checkout base branch
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git checkout origin/${{ github.event.pull_request.base.ref }}
+          
+          # Generate base artifacts
+          dbt seed --target-path target-base
+          dbt run --target-path target-base
+          dbt docs generate --target-path target-base
+          
+          # Return to PR branch
+          git checkout ${{ github.event.pull_request.head.sha }}
+
+      - name: Prepare dbt Current environment
+        run: |
+          # Generate current artifacts
+          dbt seed
+          dbt run
+          dbt docs generate
+
+      - name: Run Claude Code with Recce MCP
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
@@ -40,11 +114,6 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
+          # Specify MCP server configuration file
+          mcp_server_config_path: '.github/mcp_config.json'
 

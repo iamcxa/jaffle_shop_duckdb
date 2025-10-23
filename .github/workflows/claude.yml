@@ -120,8 +120,8 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Specify MCP server configuration file for Recce tools
+          # Configure Recce MCP tools via claude_args
           # Available tools: get_lineage_diff, row_count_diff, query, query_diff, profile_diff
           # Note: Recce tools are only available when running in PR context with artifacts
-          mcp_server_config_path: '.github/mcp_config.json'
+          claude_args: "--mcp-config .github/mcp_config.json --max-turns 10"
 

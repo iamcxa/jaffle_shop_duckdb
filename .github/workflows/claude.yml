@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # For PR events, checkout PR head; for issue_comment, will be updated in Get PR information step
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Checkout Recce Repository
@@ -78,19 +79,47 @@ jobs:
         run: |
           dbt deps
 
+      - name: Get PR information
+        if: github.event.pull_request != null || github.event.issue.pull_request != null
+        id: pr-info
+        run: |
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
+            # For issue comments on PRs, fetch PR details
+            PR_NUMBER=${{ github.event.issue.number }}
+            PR_DATA=$(gh pr view $PR_NUMBER --json baseRefName,headRefName,headRefOid --repo ${{ github.repository }})
+            BASE_REF=$(echo $PR_DATA | jq -r '.baseRefName')
+            HEAD_SHA=$(echo $PR_DATA | jq -r '.headRefOid')
+            BASE_SHA=$(gh api repos/${{ github.repository }}/git/ref/heads/$BASE_REF --jq '.object.sha')
+            
+            echo "base_ref=$BASE_REF" >> $GITHUB_OUTPUT
+            echo "base_sha=$BASE_SHA" >> $GITHUB_OUTPUT
+            echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+            
+            # Checkout PR head commit for issue comments
+            git fetch origin $HEAD_SHA
+            git checkout $HEAD_SHA
+          else
+            # For PR events, use event data directly
+            echo "base_ref=${{ github.event.pull_request.base.ref }}" >> $GITHUB_OUTPUT
+            echo "base_sha=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+            echo "head_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Cache base target artifacts
-        if: github.event.pull_request != null
+        if: github.event.pull_request != null || github.event.issue.pull_request != null
         id: cache-base-target
         uses: actions/cache@v4
         with:
           path: target-base/
-          key: dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}-${{ hashFiles('models/**/*.sql', 'seeds/**/*.csv', 'dbt_project.yml') }}
+          key: dbt-base-${{ steps.pr-info.outputs.base_ref }}-${{ steps.pr-info.outputs.base_sha }}-${{ hashFiles('models/**/*.sql', 'seeds/**/*.csv', 'dbt_project.yml') }}
           restore-keys: |
-            dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}-
-            dbt-base-${{ github.event.pull_request.base.ref }}-
+            dbt-base-${{ steps.pr-info.outputs.base_ref }}-${{ steps.pr-info.outputs.base_sha }}-
+            dbt-base-${{ steps.pr-info.outputs.base_ref }}-
 
       - name: Prepare dbt Base environment
-        if: github.event.pull_request != null && steps.cache-base-target.outputs.cache-hit != 'true'
+        if: (github.event.pull_request != null || github.event.issue.pull_request != null) && steps.cache-base-target.outputs.cache-hit != 'true'
         id: prepare-base
         continue-on-error: true
         run: |
@@ -101,8 +130,8 @@ jobs:
           fi
           
           # Checkout base branch to a detached HEAD
-          git fetch origin ${{ github.event.pull_request.base.ref }}
-          git checkout -q origin/${{ github.event.pull_request.base.ref }}
+          git fetch origin ${{ steps.pr-info.outputs.base_ref }}
+          git checkout -q origin/${{ steps.pr-info.outputs.base_ref }}
           
           # Generate base artifacts with error handling and capture exit codes
           EXIT_CODE=0
@@ -111,7 +140,7 @@ jobs:
           dbt docs generate --target-path target-base || { echo "::warning::dbt docs generate failed for base environment"; EXIT_CODE=1; }
           
           # Return to original branch/commit
-          git checkout -q ${{ github.event.pull_request.head.sha }}
+          git checkout -q ${{ steps.pr-info.outputs.head_sha }}
           
           # Restore PR-specific files
           if [ -f "/tmp/pr-files/mcp_config.json" ]; then
@@ -123,7 +152,7 @@ jobs:
           echo "success=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
 
       - name: Validate Base Artifacts
-        if: github.event.pull_request != null
+        if: github.event.pull_request != null || github.event.issue.pull_request != null
         id: validate-base
         run: |
           # Check if base artifacts exist (either from cache or just generated)
@@ -136,7 +165,7 @@ jobs:
           fi
 
       - name: Prepare dbt Current environment
-        if: github.event.pull_request != null
+        if: github.event.pull_request != null || github.event.issue.pull_request != null
         id: prepare-current
         continue-on-error: true
         run: |
@@ -150,7 +179,7 @@ jobs:
           echo "success=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
 
       - name: Validate MCP Configuration
-        if: github.event.pull_request != null
+        if: github.event.pull_request != null || github.event.issue.pull_request != null
         run: |
           # Show current working directory and files for debugging
           echo "Current directory: $(pwd)"
@@ -172,11 +201,19 @@ jobs:
             exit 1
           fi
           
-          # Check if Recce is installed
-          if python -c "import recce.mcp_server" 2>/dev/null; then
-            echo "✓ Recce MCP server module is available"
+          # Check if Recce CLI is installed and has mcp-server command
+          if command -v recce >/dev/null 2>&1; then
+            echo "✓ Recce CLI is installed: $(which recce)"
+            # Test if mcp-server command is available
+            if recce mcp-server --help >/dev/null 2>&1; then
+              echo "✓ Recce MCP server command is available"
+            else
+              echo "::error::Recce CLI found but mcp-server command not available"
+              echo "This may indicate the feature branch is not installed correctly"
+              exit 1
+            fi
           else
-            echo "::error::Recce MCP server module not found"
+            echo "::error::Recce CLI not found in PATH"
             exit 1
           fi
 

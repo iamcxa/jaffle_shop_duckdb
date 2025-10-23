@@ -35,11 +35,15 @@ jobs:
         with:
           repository: 'DataRecce/recce'
           path: 'recce-repo'
+          # TODO: Update to stable release tag once available (e.g., v1.0.0)
+          # Currently using feature branch for MCP implementation
           ref: 'feature/drc-1893-implement-the-mcp-server-in-recce'
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
+          # Python 3.10 is used for compatibility with Recce and dbt-core
+          # Recce requires Python 3.9+ per its setup.py
           python-version: '3.10'
 
       - name: Cache Python dependencies
@@ -87,28 +91,76 @@ jobs:
 
       - name: Prepare dbt Base environment
         if: github.event.pull_request != null && steps.cache-base-target.outputs.cache-hit != 'true'
+        id: prepare-base
         continue-on-error: true
         run: |
-          # Checkout base branch
+          # Save current branch for later
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          
+          # Checkout base branch to a detached HEAD
           git fetch origin ${{ github.event.pull_request.base.ref }}
-          git checkout origin/${{ github.event.pull_request.base.ref }}
+          git checkout -q origin/${{ github.event.pull_request.base.ref }}
           
-          # Generate base artifacts with error handling
-          dbt seed --target-path target-base || echo "Warning: dbt seed failed for base environment"
-          dbt run --target-path target-base || echo "Warning: dbt run failed for base environment"
-          dbt docs generate --target-path target-base || echo "Warning: dbt docs generate failed for base environment"
+          # Generate base artifacts with error handling and capture exit codes
+          EXIT_CODE=0
+          dbt seed --target-path target-base || { echo "::warning::dbt seed failed for base environment"; EXIT_CODE=1; }
+          dbt run --target-path target-base || { echo "::warning::dbt run failed for base environment"; EXIT_CODE=1; }
+          dbt docs generate --target-path target-base || { echo "::warning::dbt docs generate failed for base environment"; EXIT_CODE=1; }
           
-          # Return to PR branch
-          git checkout ${{ github.event.pull_request.head.sha }}
+          # Return to original branch/commit
+          git checkout -q ${{ github.event.pull_request.head.sha }}
+          
+          # Set output to indicate if base artifacts were successfully generated
+          echo "success=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+      - name: Validate Base Artifacts
+        if: github.event.pull_request != null
+        id: validate-base
+        run: |
+          # Check if base artifacts exist (either from cache or just generated)
+          if [ -f "target-base/manifest.json" ] && [ -f "target-base/catalog.json" ]; then
+            echo "✓ Base artifacts found"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::Base artifacts not found. Recce comparison features may be limited."
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Prepare dbt Current environment
         if: github.event.pull_request != null
+        id: prepare-current
         continue-on-error: true
         run: |
           # Generate current artifacts with error handling
-          dbt seed || echo "Warning: dbt seed failed for current environment"
-          dbt run || echo "Warning: dbt run failed for current environment"
-          dbt docs generate || echo "Warning: dbt docs generate failed for current environment"
+          EXIT_CODE=0
+          dbt seed || { echo "::warning::dbt seed failed for current environment"; EXIT_CODE=1; }
+          dbt run || { echo "::warning::dbt run failed for current environment"; EXIT_CODE=1; }
+          dbt docs generate || { echo "::warning::dbt docs generate failed for current environment"; EXIT_CODE=1; }
+          
+          # Set output to indicate success
+          echo "success=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+      - name: Validate MCP Configuration
+        if: github.event.pull_request != null
+        run: |
+          # Validate MCP config file exists and is valid JSON
+          if [ -f ".github/mcp_config.json" ]; then
+            if jq empty .github/mcp_config.json 2>/dev/null; then
+              echo "✓ MCP configuration is valid"
+            else
+              echo "::error::MCP configuration is invalid JSON"
+              exit 1
+            fi
+          else
+            echo "::warning::MCP configuration file not found"
+          fi
+          
+          # Check if Recce is installed
+          if python -c "import recce.mcp_server" 2>/dev/null; then
+            echo "✓ Recce MCP server module is available"
+          else
+            echo "::warning::Recce MCP server module not found"
+          fi
 
       - name: Run Claude Code with Recce MCP
         id: claude

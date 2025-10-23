@@ -35,7 +35,7 @@ jobs:
         with:
           repository: 'DataRecce/recce'
           path: 'recce-repo'
-          ref: 'main'
+          ref: 'feature/drc-1893-implement-the-mcp-server-in-recce'
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -46,8 +46,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('requirements.txt') }}-${{ hashFiles('recce-repo/pyproject.toml') }}
+          key: pip-${{ hashFiles('requirements.txt') }}-recce-drc-1893
           restore-keys: |
+            pip-${{ hashFiles('requirements.txt') }}-
             pip-
 
       - name: Cache dbt packages
@@ -74,35 +75,40 @@ jobs:
           dbt deps
 
       - name: Cache base target artifacts
+        if: github.event.pull_request != null
         id: cache-base-target
         uses: actions/cache@v4
         with:
           path: target-base/
-          key: dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}
+          key: dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}-${{ hashFiles('models/**/*.sql', 'seeds/**/*.csv', 'dbt_project.yml') }}
           restore-keys: |
+            dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}-
             dbt-base-${{ github.event.pull_request.base.ref }}-
 
       - name: Prepare dbt Base environment
-        if: steps.cache-base-target.outputs.cache-hit != 'true'
+        if: github.event.pull_request != null && steps.cache-base-target.outputs.cache-hit != 'true'
+        continue-on-error: true
         run: |
           # Checkout base branch
           git fetch origin ${{ github.event.pull_request.base.ref }}
           git checkout origin/${{ github.event.pull_request.base.ref }}
           
-          # Generate base artifacts
-          dbt seed --target-path target-base
-          dbt run --target-path target-base
-          dbt docs generate --target-path target-base
+          # Generate base artifacts with error handling
+          dbt seed --target-path target-base || echo "Warning: dbt seed failed for base environment"
+          dbt run --target-path target-base || echo "Warning: dbt run failed for base environment"
+          dbt docs generate --target-path target-base || echo "Warning: dbt docs generate failed for base environment"
           
           # Return to PR branch
           git checkout ${{ github.event.pull_request.head.sha }}
 
       - name: Prepare dbt Current environment
+        if: github.event.pull_request != null
+        continue-on-error: true
         run: |
-          # Generate current artifacts
-          dbt seed
-          dbt run
-          dbt docs generate
+          # Generate current artifacts with error handling
+          dbt seed || echo "Warning: dbt seed failed for current environment"
+          dbt run || echo "Warning: dbt run failed for current environment"
+          dbt docs generate || echo "Warning: dbt docs generate failed for current environment"
 
       - name: Run Claude Code with Recce MCP
         id: claude
@@ -114,6 +120,8 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Specify MCP server configuration file
+          # Specify MCP server configuration file for Recce tools
+          # Available tools: get_lineage_diff, row_count_diff, query, query_diff, profile_diff
+          # Note: Recce tools are only available when running in PR context with artifacts
           mcp_server_config_path: '.github/mcp_config.json'
 

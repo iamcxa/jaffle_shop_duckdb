@@ -94,8 +94,11 @@ jobs:
         id: prepare-base
         continue-on-error: true
         run: |
-          # Save current branch for later
-          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          # Save MCP config and other PR-specific files that might not exist in base branch
+          mkdir -p /tmp/pr-files
+          if [ -f ".github/mcp_config.json" ]; then
+            cp .github/mcp_config.json /tmp/pr-files/
+          fi
           
           # Checkout base branch to a detached HEAD
           git fetch origin ${{ github.event.pull_request.base.ref }}
@@ -109,6 +112,12 @@ jobs:
           
           # Return to original branch/commit
           git checkout -q ${{ github.event.pull_request.head.sha }}
+          
+          # Restore PR-specific files
+          if [ -f "/tmp/pr-files/mcp_config.json" ]; then
+            mkdir -p .github
+            cp /tmp/pr-files/mcp_config.json .github/
+          fi
           
           # Set output to indicate if base artifacts were successfully generated
           echo "success=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
@@ -143,23 +152,32 @@ jobs:
       - name: Validate MCP Configuration
         if: github.event.pull_request != null
         run: |
+          # Show current working directory and files for debugging
+          echo "Current directory: $(pwd)"
+          echo "MCP config path: $(pwd)/.github/mcp_config.json"
+          ls -la .github/ || echo "No .github directory"
+          
           # Validate MCP config file exists and is valid JSON
           if [ -f ".github/mcp_config.json" ]; then
+            echo "✓ MCP configuration file found"
             if jq empty .github/mcp_config.json 2>/dev/null; then
-              echo "✓ MCP configuration is valid"
+              echo "✓ MCP configuration is valid JSON"
+              cat .github/mcp_config.json
             else
               echo "::error::MCP configuration is invalid JSON"
               exit 1
             fi
           else
-            echo "::warning::MCP configuration file not found"
+            echo "::error::MCP configuration file not found at .github/mcp_config.json"
+            exit 1
           fi
           
           # Check if Recce is installed
           if python -c "import recce.mcp_server" 2>/dev/null; then
             echo "✓ Recce MCP server module is available"
           else
-            echo "::warning::Recce MCP server module not found"
+            echo "::error::Recce MCP server module not found"
+            exit 1
           fi
 
       - name: Run Claude Code with Recce MCP

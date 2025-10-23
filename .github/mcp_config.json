@@ -2,11 +2,15 @@
   "mcpServers": {
     "recce": {
       "command": "python",
-      "args": ["-m", "recce.mcp_server"],
-      "env": {
-        "DBT_PROJECT_DIR": ".",
-        "DBT_PROFILES_DIR": "."
-      }
+      "args": [
+        "-m",
+        "recce.cli",
+        "mcp-server",
+        "--project-dir",
+        ".",
+        "--profiles-dir",
+        "."
+      ]
     }
   }
 }

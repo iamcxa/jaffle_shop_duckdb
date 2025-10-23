@@ -28,9 +28,141 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Run Claude Code
+      - name: Checkout Recce Repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'DataRecce/recce'
+          path: 'recce-repo'
+          # TODO: Update to stable release tag once available (e.g., v1.0.0)
+          # Currently using feature branch for MCP implementation
+          ref: 'feature/drc-1893-implement-the-mcp-server-in-recce'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          # Python 3.10 is used for compatibility with Recce and dbt-core
+          # Recce requires Python 3.9+ per its setup.py
+          python-version: '3.10'
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}-recce-drc-1893
+          restore-keys: |
+            pip-${{ hashFiles('requirements.txt') }}-
+            pip-
+
+      - name: Cache dbt packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            dbt_packages/
+            ~/.dbt/
+          key: dbt-packages-${{ hashFiles('packages.yml') }}
+          restore-keys: |
+            dbt-packages-
+
+      - name: Install Recce from source
+        run: |
+          cd recce-repo
+          pip install -e .
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Install dbt packages
+        run: |
+          dbt deps
+
+      - name: Cache base target artifacts
+        if: github.event.pull_request != null
+        id: cache-base-target
+        uses: actions/cache@v4
+        with:
+          path: target-base/
+          key: dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}-${{ hashFiles('models/**/*.sql', 'seeds/**/*.csv', 'dbt_project.yml') }}
+          restore-keys: |
+            dbt-base-${{ github.event.pull_request.base.ref }}-${{ github.event.pull_request.base.sha }}-
+            dbt-base-${{ github.event.pull_request.base.ref }}-
+
+      - name: Prepare dbt Base environment
+        if: github.event.pull_request != null && steps.cache-base-target.outputs.cache-hit != 'true'
+        id: prepare-base
+        continue-on-error: true
+        run: |
+          # Save current branch for later
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          
+          # Checkout base branch to a detached HEAD
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git checkout -q origin/${{ github.event.pull_request.base.ref }}
+          
+          # Generate base artifacts with error handling and capture exit codes
+          EXIT_CODE=0
+          dbt seed --target-path target-base || { echo "::warning::dbt seed failed for base environment"; EXIT_CODE=1; }
+          dbt run --target-path target-base || { echo "::warning::dbt run failed for base environment"; EXIT_CODE=1; }
+          dbt docs generate --target-path target-base || { echo "::warning::dbt docs generate failed for base environment"; EXIT_CODE=1; }
+          
+          # Return to original branch/commit
+          git checkout -q ${{ github.event.pull_request.head.sha }}
+          
+          # Set output to indicate if base artifacts were successfully generated
+          echo "success=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+      - name: Validate Base Artifacts
+        if: github.event.pull_request != null
+        id: validate-base
+        run: |
+          # Check if base artifacts exist (either from cache or just generated)
+          if [ -f "target-base/manifest.json" ] && [ -f "target-base/catalog.json" ]; then
+            echo "✓ Base artifacts found"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::Base artifacts not found. Recce comparison features may be limited."
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepare dbt Current environment
+        if: github.event.pull_request != null
+        id: prepare-current
+        continue-on-error: true
+        run: |
+          # Generate current artifacts with error handling
+          EXIT_CODE=0
+          dbt seed || { echo "::warning::dbt seed failed for current environment"; EXIT_CODE=1; }
+          dbt run || { echo "::warning::dbt run failed for current environment"; EXIT_CODE=1; }
+          dbt docs generate || { echo "::warning::dbt docs generate failed for current environment"; EXIT_CODE=1; }
+          
+          # Set output to indicate success
+          echo "success=$([[ $EXIT_CODE -eq 0 ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+      - name: Validate MCP Configuration
+        if: github.event.pull_request != null
+        run: |
+          # Validate MCP config file exists and is valid JSON
+          if [ -f ".github/mcp_config.json" ]; then
+            if jq empty .github/mcp_config.json 2>/dev/null; then
+              echo "✓ MCP configuration is valid"
+            else
+              echo "::error::MCP configuration is invalid JSON"
+              exit 1
+            fi
+          else
+            echo "::warning::MCP configuration file not found"
+          fi
+          
+          # Check if Recce is installed
+          if python -c "import recce.mcp_server" 2>/dev/null; then
+            echo "✓ Recce MCP server module is available"
+          else
+            echo "::warning::Recce MCP server module not found"
+          fi
+
+      - name: Run Claude Code with Recce MCP
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
@@ -40,11 +172,8 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
+          # Configure Recce MCP tools via claude_args
+          # Available tools: get_lineage_diff, row_count_diff, query, query_diff, profile_diff
+          # Note: Recce tools are only available when running in PR context with artifacts
+          claude_args: "--mcp-config .github/mcp_config.json --max-turns 10"
 

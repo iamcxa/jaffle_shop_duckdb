@@ -201,11 +201,19 @@ jobs:
             exit 1
           fi
           
-          # Check if Recce is installed
-          if python -c "import recce.mcp_server" 2>/dev/null; then
-            echo "✓ Recce MCP server module is available"
+          # Check if Recce CLI is installed and has mcp-server command
+          if command -v recce >/dev/null 2>&1; then
+            echo "✓ Recce CLI is installed: $(which recce)"
+            # Test if mcp-server command is available
+            if recce mcp-server --help >/dev/null 2>&1; then
+              echo "✓ Recce MCP server command is available"
+            else
+              echo "::error::Recce CLI found but mcp-server command not available"
+              echo "This may indicate the feature branch is not installed correctly"
+              exit 1
+            fi
           else
-            echo "::error::Recce MCP server module not found"
+            echo "::error::Recce CLI not found in PATH"
             exit 1
           fi
 

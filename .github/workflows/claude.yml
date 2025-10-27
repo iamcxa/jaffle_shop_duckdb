@@ -94,6 +94,8 @@ jobs:
           echo "Installing Recce from source..."
           pip install -e ./recce-repo
           
+          recce mcp-server
+          
           # Verify installation
           if command -v recce >/dev/null 2>&1; then
             echo "✓ Recce installed successfully: $(which recce)"
@@ -102,8 +104,6 @@ jobs:
             echo "::error::Recce installation failed - command not found"
             exit 1
           fi
-
-          recce mcp-server
 
       - name: Install Python dependencies
         run: |

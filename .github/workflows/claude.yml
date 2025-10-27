@@ -40,6 +40,10 @@ jobs:
           # TODO: Update to stable release tag once available (e.g., v1.0.0)
           # Currently using feature branch for MCP implementation
           ref: 'feature/drc-1893-implement-the-mcp-server-in-recce'
+          # Shallow clone to minimize download time and storage
+          fetch-depth: 1
+          # Disable sparse-checkout for now to ensure all necessary files for pip install are available
+          # sparse-checkout and sparse-checkout-cone-mode can be enabled if we identify specific paths needed
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -69,7 +73,35 @@ jobs:
 
       - name: Install Recce from source
         run: |
+          # Verify checkout directory exists and contains setup.py
+          if [ ! -d "./recce-repo" ]; then
+            echo "::error::Recce repository not found at ./recce-repo"
+            exit 1
+          fi
+          
+          if [ ! -f "./recce-repo/setup.py" ]; then
+            echo "::error::setup.py not found in recce-repo. Checkout may be incomplete."
+            exit 1
+          fi
+          
+          # Verify VERSION file exists (required by setup.py)
+          if [ ! -f "./recce-repo/recce/VERSION" ]; then
+            echo "::error::VERSION file not found. Package data may be incomplete."
+            exit 1
+          fi
+          
+          # Install in editable mode
+          echo "Installing Recce from source..."
           pip install -e ./recce-repo
+          
+          # Verify installation
+          if command -v recce >/dev/null 2>&1; then
+            echo "✓ Recce installed successfully: $(which recce)"
+            echo "✓ Recce version: $(recce --version)"
+          else
+            echo "::error::Recce installation failed - command not found"
+            exit 1
+          fi
 
       - name: Install Python dependencies
         run: |

@@ -103,6 +103,8 @@ jobs:
             exit 1
           fi
 
+          recce mcp-server
+
       - name: Install Python dependencies
         run: |
           pip install -r requirements.txt
@@ -266,8 +268,7 @@ jobs:
             --mcp-config .github/mcp_config.json
             --max-turns 50
             --allowed-tools "
-              Bash(recce --version),
-              Bash(recce mcp-server --help),
+              Bash(recce),
               Bash(recce mcp-server),
               Bash(ls target/manifest.json),
               Bash(ls target-base/manifest.json),

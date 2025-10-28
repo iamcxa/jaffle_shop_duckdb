@@ -40,6 +40,10 @@ jobs:
           # TODO: Update to stable release tag once available (e.g., v1.0.0)
           # Currently using feature branch for MCP implementation
           ref: 'feature/drc-1893-implement-the-mcp-server-in-recce'
+          # Shallow clone to minimize download time and storage
+          fetch-depth: 1
+          # Disable sparse-checkout for now to ensure all necessary files for pip install are available
+          # sparse-checkout and sparse-checkout-cone-mode can be enabled if we identify specific paths needed
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -69,7 +73,35 @@ jobs:
 
       - name: Install Recce from source
         run: |
+          # Verify checkout directory exists and contains setup.py
+          if [ ! -d "./recce-repo" ]; then
+            echo "::error::Recce repository not found at ./recce-repo"
+            exit 1
+          fi
+          
+          if [ ! -f "./recce-repo/setup.py" ]; then
+            echo "::error::setup.py not found in recce-repo. Checkout may be incomplete."
+            exit 1
+          fi
+          
+          # Verify VERSION file exists (required by setup.py)
+          if [ ! -f "./recce-repo/recce/VERSION" ]; then
+            echo "::error::VERSION file not found. Package data may be incomplete."
+            exit 1
+          fi
+          
+          # Install in editable mode
+          echo "Installing Recce from source..."
           pip install -e ./recce-repo
+          
+          # Verify installation
+          if command -v recce >/dev/null 2>&1; then
+            echo "✓ Recce installed successfully: $(which recce)"
+            echo "✓ Recce version: $(recce --version)"
+          else
+            echo "::error::Recce installation failed - command not found"
+            exit 1
+          fi
 
       - name: Install Python dependencies
         run: |
@@ -217,6 +249,34 @@ jobs:
             exit 1
           fi
 
+      - name: Test Recce MCP Server
+        if: github.event.pull_request != null || github.event.issue.pull_request != null
+        run: |
+          echo "Testing Recce MCP server startup..."
+          
+          # Verify artifacts are accessible
+          echo "Checking dbt artifacts..."
+          if [ -f "target/manifest.json" ]; then
+            echo "✓ Current manifest.json found"
+          else
+            echo "::warning::Current manifest.json not found"
+          fi
+          
+          if [ -f "target-base/manifest.json" ]; then
+            echo "✓ Base manifest.json found"
+          else
+            echo "::warning::Base manifest.json not found - some Recce features may be limited"
+          fi
+          
+          # Test Recce MCP server can start (with timeout)
+          echo "Testing Recce MCP server..."
+          timeout 10s recce mcp-server --help || {
+            echo "::error::Failed to verify Recce MCP server"
+            exit 1
+          }
+          
+          echo "✓ Recce MCP server is ready"
+
       - name: Run Claude Code with Recce MCP
         id: claude
         uses: anthropics/claude-code-action@v1
@@ -230,5 +290,9 @@ jobs:
           # Configure Recce MCP tools via claude_args
           # Available tools: get_lineage_diff, row_count_diff, query, query_diff, profile_diff
           # Note: Recce tools are only available when running in PR context with artifacts
-          claude_args: "--mcp-config .github/mcp_config.json --max-turns 50"
+          claude_args: |
+            --mcp-config .github/mcp_config.json
+            --max-turns 50
+            --system-prompt "You are analyzing a dbt project Pull Request with Recce MCP tools available. Always start your PR analysis by using Recce MCP tools to compare base and current environments: 1) Use mcp__recce__get_lineage_diff to understand model changes, 2) Use mcp__recce__row_count_diff to check data volume changes, 3) Use mcp__recce__profile_diff for statistical analysis of key columns, 4) Use mcp__recce__query_diff to validate data quality. Prefer Recce MCP tools over manual queries for all dbt model comparisons and data validation. Always address the user's specific request from their @claude comment while providing comprehensive Recce-based analysis."
+            --allowedTools "Bash(recce),Bash(recce mcp-server),Bash(ls target/manifest.json),Bash(ls target-base/manifest.json),Bash(gh pr view:*),Bash(jq -r *),mcp__recce__get_lineage_diff,mcp__recce__row_count_diff,mcp__recce__query,mcp__recce__query_diff,mcp__recce__profile_diff"
 

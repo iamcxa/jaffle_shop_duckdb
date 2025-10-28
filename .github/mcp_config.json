@@ -1,16 +1,21 @@
 {
   "mcpServers": {
     "recce": {
-      "command": "python",
+      "command": "recce",
       "args": [
-        "-m",
-        "recce.cli",
         "mcp-server",
         "--project-dir",
         ".",
         "--profiles-dir",
-        "."
-      ]
+        ".",
+        "--config",
+        "recce.yml",
+        "--target-path",
+        "target",
+        "--target-base-path",
+        "target-base"
+      ],
+      "env": {}
     }
   }
 }

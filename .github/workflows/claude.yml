@@ -71,6 +71,14 @@ jobs:
           restore-keys: |
             dbt-packages-
 
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Install dbt packages
+        run: |
+          dbt deps
+
       - name: Install Recce from source
         run: |
           # Verify checkout directory exists and contains setup.py
@@ -124,14 +132,6 @@ jobs:
             pip list
             exit 1
           }
-
-      - name: Install Python dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Install dbt packages
-        run: |
-          dbt deps
 
       - name: Get PR information
         if: github.event.pull_request != null || github.event.issue.pull_request != null
@@ -276,39 +276,36 @@ jobs:
         run: |
           echo "Testing Recce MCP server startup..."
 
-          # Verify artifacts are accessible
-          echo "Checking dbt artifacts..."
-          if [ -f "target/manifest.json" ]; then
-            echo "✓ Current manifest.json found"
-          else
-            echo "::warning::Current manifest.json not found"
-          fi
-
-          if [ -f "target-base/manifest.json" ]; then
-            echo "✓ Base manifest.json found"
-          else
-            echo "::warning::Base manifest.json not found - some Recce features may be limited"
-          fi
-
-          # Test Recce MCP server can start (with timeout)
           echo "Testing Recce MCP server with full parameters..."
-          echo "Command: recce mcp-server --project-dir . --profiles-dir . --config recce.yml --target-path target --target-base-path target-base"
+          CMD="recce mcp-server --project-dir . --profiles-dir . --config recce.yml --target-path target --target-base-path target-base"
+          echo "Command: $CMD"
 
-          # Test actual startup with real parameters (not just --help)
-          timeout 5s recce mcp-server --project-dir . --profiles-dir . --config recce.yml --target-path target --target-base-path target-base 2>&1 &
+          # 啟動並收集輸出
+          LOG_FILE="recce_mcp_startup.log"
+          timeout 5s bash -c "$CMD" >"$LOG_FILE" 2>&1 & 
           MCP_PID=$!
-          sleep 2
 
-          # Check if process is still running
-          if kill -0 $MCP_PID 2>/dev/null; then
-            echo "✓ Recce MCP server started successfully (PID: $MCP_PID)"
-            kill $MCP_PID
-          else
-            echo "::error::Recce MCP server failed to start or crashed immediately"
+          sleep 1
+
+          if ! kill -0 "$MCP_PID" 2>/dev/null; then
+            echo "::error::Recce MCP server failed to start"
+            cat "$LOG_FILE" || true
             exit 1
           fi
 
-          echo "✓ Recce MCP server is ready"
+          # 檢查是否有「Too few parameters」錯誤
+          if grep -q "Too few parameters" "$LOG_FILE"; then
+            echo "::error::Recce MCP server start error detected: Too few parameters"
+            cat "$LOG_FILE"
+            kill "$MCP_PID" || true
+            exit 1
+          fi
+
+          # 可選：檢查 health/ping（若 server 支援）
+          # curl -sf http://localhost:PORT/health || { echo "::error::Health check failed"; exit 1; }
+
+          echo "✓ Recce MCP server started without parameter errors (PID: $MCP_PID)"
+          kill "$MCP_PID"
 
       - name: Run Claude Code with Recce MCP
         id: claude

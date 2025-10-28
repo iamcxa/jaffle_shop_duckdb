@@ -290,15 +290,9 @@ jobs:
           # Configure Recce MCP tools via claude_args
           # Available tools: get_lineage_diff, row_count_diff, query, query_diff, profile_diff
           # Note: Recce tools are only available when running in PR context with artifacts
-          claude_args: >
+          claude_args: |
             --mcp-config .github/mcp_config.json
             --max-turns 50
-            --allowed-tools "
-              Bash(recce),
-              Bash(recce mcp-server),
-              Bash(ls target/manifest.json),
-              Bash(ls target-base/manifest.json),
-              Bash(gh pr view:*),
-              Bash(jq -r *)
-            "
+            --system-prompt "You are analyzing a dbt project Pull Request with Recce MCP tools available. Always start your PR analysis by using Recce MCP tools to compare base and current environments: 1) Use mcp__recce__get_lineage_diff to understand model changes, 2) Use mcp__recce__row_count_diff to check data volume changes, 3) Use mcp__recce__profile_diff for statistical analysis of key columns, 4) Use mcp__recce__query_diff to validate data quality. Prefer Recce MCP tools over manual queries for all dbt model comparisons and data validation. Always address the user's specific request from their @claude comment while providing comprehensive Recce-based analysis."
+            --allowedTools "Bash(recce),Bash(recce mcp-server),Bash(ls target/manifest.json),Bash(ls target-base/manifest.json),Bash(gh pr view:*),Bash(jq -r *),mcp__recce__get_lineage_diff,mcp__recce__row_count_diff,mcp__recce__query,mcp__recce__query_diff,mcp__recce__profile_diff"
 

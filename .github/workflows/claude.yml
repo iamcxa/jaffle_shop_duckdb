@@ -92,6 +92,7 @@ jobs:
           
           # Install in editable mode
           echo "Installing Recce from source..."
+          pip install packaging
           pip install -e ./recce-repo
           
           # Verify installation

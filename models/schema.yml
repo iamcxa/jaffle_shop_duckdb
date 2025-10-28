@@ -14,6 +14,9 @@ models:
       - name: first_name
         description: Customer's first name. PII.
 
+      - name: middle_name
+        description: Customer's middle name. PII.
+
       - name: last_name
         description: Customer's last name. PII.
 

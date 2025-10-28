@@ -13,6 +13,7 @@ renamed as (
     select
         id as customer_id,
         first_name,
+        middle_name,
         last_name
 
     from source

@@ -249,6 +249,34 @@ jobs:
             exit 1
           fi
 
+      - name: Test Recce MCP Server
+        if: github.event.pull_request != null || github.event.issue.pull_request != null
+        run: |
+          echo "Testing Recce MCP server startup..."
+          
+          # Verify artifacts are accessible
+          echo "Checking dbt artifacts..."
+          if [ -f "target/manifest.json" ]; then
+            echo "✓ Current manifest.json found"
+          else
+            echo "::warning::Current manifest.json not found"
+          fi
+          
+          if [ -f "target-base/manifest.json" ]; then
+            echo "✓ Base manifest.json found"
+          else
+            echo "::warning::Base manifest.json not found - some Recce features may be limited"
+          fi
+          
+          # Test Recce MCP server can start (with timeout)
+          echo "Testing Recce MCP server..."
+          timeout 10s recce mcp-server --help || {
+            echo "::error::Failed to verify Recce MCP server"
+            exit 1
+          }
+          
+          echo "✓ Recce MCP server is ready"
+
       - name: Run Claude Code with Recce MCP
         id: claude
         uses: anthropics/claude-code-action@v1

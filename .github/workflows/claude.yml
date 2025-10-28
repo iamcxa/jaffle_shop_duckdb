@@ -253,7 +253,7 @@ jobs:
         if: github.event.pull_request != null || github.event.issue.pull_request != null
         run: |
           echo "Testing Recce MCP server startup..."
-          
+
           # Verify artifacts are accessible
           echo "Checking dbt artifacts..."
           if [ -f "target/manifest.json" ]; then
@@ -261,20 +261,31 @@ jobs:
           else
             echo "::warning::Current manifest.json not found"
           fi
-          
+
           if [ -f "target-base/manifest.json" ]; then
             echo "✓ Base manifest.json found"
           else
             echo "::warning::Base manifest.json not found - some Recce features may be limited"
           fi
-          
+
           # Test Recce MCP server can start (with timeout)
-          echo "Testing Recce MCP server..."
-          timeout 10s recce mcp-server --help || {
-            echo "::error::Failed to verify Recce MCP server"
+          echo "Testing Recce MCP server with full parameters..."
+          echo "Command: recce mcp-server --project-dir . --profiles-dir . --config recce.yml --target-path target --target-base-path target-base"
+
+          # Test actual startup with real parameters (not just --help)
+          timeout 5s recce mcp-server --project-dir . --profiles-dir . --config recce.yml --target-path target --target-base-path target-base 2>&1 &
+          MCP_PID=$!
+          sleep 2
+
+          # Check if process is still running
+          if kill -0 $MCP_PID 2>/dev/null; then
+            echo "✓ Recce MCP server started successfully (PID: $MCP_PID)"
+            kill $MCP_PID
+          else
+            echo "::error::Recce MCP server failed to start or crashed immediately"
             exit 1
-          }
-          
+          fi
+
           echo "✓ Recce MCP server is ready"
 
       - name: Run Claude Code with Recce MCP
@@ -295,4 +306,8 @@ jobs:
             --max-turns 50
             --system-prompt "You are analyzing a dbt project Pull Request with Recce MCP tools available. Always start your PR analysis by using Recce MCP tools to compare base and current environments: 1) Use mcp__recce__get_lineage_diff to understand model changes, 2) Use mcp__recce__row_count_diff to check data volume changes, 3) Use mcp__recce__profile_diff for statistical analysis of key columns, 4) Use mcp__recce__query_diff to validate data quality. Prefer Recce MCP tools over manual queries for all dbt model comparisons and data validation. Always address the user's specific request from their @claude comment while providing comprehensive Recce-based analysis."
             --allowedTools "Bash(recce),Bash(recce mcp-server),Bash(ls target/manifest.json),Bash(ls target-base/manifest.json),Bash(gh pr view:*),Bash(jq -r *),mcp__recce__get_lineage_diff,mcp__recce__row_count_diff,mcp__recce__query,mcp__recce__query_diff,mcp__recce__profile_diff"
+        env:
+          # Ensure MCP server can find Python and recce
+          PATH: ${{ env.pythonLocation }}/bin:${{ env.PATH }}
+          PYTHONPATH: ${{ env.pythonLocation }}/lib/python3.10/site-packages
 

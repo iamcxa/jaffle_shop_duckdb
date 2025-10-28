@@ -90,10 +90,22 @@ jobs:
             exit 1
           fi
           
-          # Install in editable mode
-          echo "Installing Recce from source..."
+          # Upgrade pip, setuptools, and wheel to ensure proper dependency resolution
+          echo "Upgrading pip, setuptools, and wheel..."
+          pip install --upgrade pip setuptools wheel
+          
+          # Install packaging first (required by some dependencies)
+          echo "Installing base dependencies..."
           pip install packaging
-          pip install -e ./recce-repo
+          
+          # Install Recce with all dependencies
+          # Using -e for editable mode, with explicit dependency installation
+          echo "Installing Recce from source with all dependencies..."
+          pip install -e "./recce-repo[dev]" --no-cache-dir
+          
+          # Install any missing common dependencies that might not be in setup.py
+          echo "Installing additional common dependencies..."
+          pip install pytz tzdata --no-cache-dir
           
           # Verify installation
           if command -v recce >/dev/null 2>&1; then
@@ -103,6 +115,15 @@ jobs:
             echo "::error::Recce installation failed - command not found"
             exit 1
           fi
+          
+          # Verify critical dependencies are installed
+          echo "Verifying critical dependencies..."
+          python -c "import pytz; import mcp; import fastapi; import click; print('✓ All critical dependencies verified')" || {
+            echo "::error::Some critical dependencies are missing"
+            echo "Installed packages:"
+            pip list
+            exit 1
+          }
 
       - name: Install Python dependencies
         run: |
@@ -238,7 +259,7 @@ jobs:
           if command -v recce >/dev/null 2>&1; then
             echo "✓ Recce CLI is installed: $(which recce)"
             # Test if mcp-server command is available
-            if recce mcp-server --help >/dev/null 2>&1; then
+            if recce mcp-server >/dev/null 2>&1; then
               echo "✓ Recce MCP server command is available"
             else
               echo "::error::Recce CLI found but mcp-server command not available"

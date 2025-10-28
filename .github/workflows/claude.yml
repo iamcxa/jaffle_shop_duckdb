@@ -259,7 +259,7 @@ jobs:
           if command -v recce >/dev/null 2>&1; then
             echo "✓ Recce CLI is installed: $(which recce)"
             # Test if mcp-server command is available
-            if recce mcp-server >/dev/null 2>&1; then
+            if recce mcp-server --help >/dev/null 2>&1; then
               echo "✓ Recce MCP server command is available"
             else
               echo "::error::Recce CLI found but mcp-server command not available"
